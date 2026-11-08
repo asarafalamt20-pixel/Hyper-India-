@@ -1,5 +1,5 @@
 require("dotenv").config();
-const express=require("express"),session=require("express-session"),SQLiteStore=require("connect-sqlite3")(session),Database=require("better-sqlite3"),bcrypt=require("bcryptjs"),helmet=require("helmet"),path=require("path"),crypto=require("crypto");
+const express=require("express"),session=require("express-session"),SQLiteStore=require("connect-sqlite3")(session),Database=require("better-sqlite3"),bcrypt=require("bcryptjs"),helmet=require("helmet"),path=require("path"),fs=require("fs"),crypto=require("crypto");
 const app=express(),port=process.env.PORT||3000,base=(process.env.BASE_URL||`http://localhost:${port}`).replace(/\/$/,""),adminEmail=(process.env.ADMIN_EMAIL||"admin@example.com").toLowerCase();
 const db=new Database(process.env.DB_PATH||"hyper-india.sqlite");db.pragma("journal_mode=WAL");
 db.exec(`CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY,name TEXT,email TEXT UNIQUE,password_hash TEXT,code TEXT UNIQUE,referrer INTEGER,created_at TEXT DEFAULT CURRENT_TIMESTAMP);
@@ -16,7 +16,9 @@ if(!count){const ins=db.prepare("INSERT INTO products(title,category,price,merch
 ].forEach(x=>ins.run(...x))}
 app.use(helmet({contentSecurityPolicy:false}));app.use(express.json({limit:"30kb"}));app.use(express.urlencoded({extended:false}));
 app.use(session({store:new SQLiteStore({db:"sessions.sqlite",dir:process.env.SESSION_DIR||"."}),secret:process.env.SESSION_SECRET||"dev-secret-change-me",resave:false,saveUninitialized:false,cookie:{httpOnly:true,sameSite:"lax",secure:process.env.NODE_ENV==="production",maxAge:604800000}}));
-app.use(express.static(path.join(__dirname,"public")));
+// All frontend files live beside server.js in this single project folder.
+const publicDir=__dirname;
+app.use(express.static(publicDir));
 const user=id=>db.prepare("SELECT id,name,email,code,referrer FROM users WHERE id=?").get(id);
 const auth=(q,s,n)=>q.session.uid?n():s.status(401).json({error:"Please log in."});
 const admin=(q,s,n)=>{const u=q.session.uid&&db.prepare("SELECT email FROM users WHERE id=?").get(q.session.uid);if(!u||u.email!==adminEmail)return s.status(403).json({error:"Admin only."});n()};
@@ -32,5 +34,5 @@ app.get("/api/admin",(q,s)=>auth(q,s,()=>admin(q,s,()=>s.json({users:db.prepare(
 app.post("/api/admin/product",(q,s)=>auth(q,s,()=>admin(q,s,()=>{const {title,category,price,merchant,image,affiliate_url,description}=q.body;if(!title||!category||!affiliate_url||!/^https:\/\//i.test(affiliate_url))return s.status(400).json({error:"Title, category and a valid HTTPS affiliate URL are required."});db.prepare("INSERT INTO products(title,category,price,merchant,image,affiliate_url,description) VALUES(?,?,?,?,?,?,?)").run(title,category,price||"See offer",merchant||"Partner",image||"",affiliate_url,description||"");s.json({ok:true})})));
 app.post("/api/admin/commission",(q,s)=>auth(q,s,()=>admin(q,s,()=>{const uid=Number(q.body.userId),amount=Number(q.body.amount),note=String(q.body.note||"").trim();if(!user(uid)||!Number.isFinite(amount)||amount<=0||amount>1000000)return s.status(400).json({error:"Enter valid user and commission amount."});db.prepare("INSERT INTO commissions(user_id,amount,status,note) VALUES(?,?,'approved',?)").run(uid,amount,note||"Verified affiliate commission");s.json({ok:true})})));
 app.post("/api/admin/payout/:id",(q,s)=>auth(q,s,()=>admin(q,s,()=>{const status=q.body.status;if(!["paid","rejected"].includes(status))return s.status(400).json({error:"Invalid status"});const p=db.prepare("SELECT * FROM payouts WHERE id=? AND status='pending'").get(Number(q.params.id));if(!p)return s.status(404).json({error:"Pending request not found"});db.prepare("UPDATE payouts SET status=? WHERE id=?").run(status,p.id);s.json({ok:true})})));
-app.get("*",(q,s)=>s.sendFile(path.join(__dirname,"public","index.html")));
+app.get("*",(q,s)=>s.sendFile(path.join(__dirname,"index.html")));
 app.listen(port,()=>console.log("Hyper India running on "+port));
